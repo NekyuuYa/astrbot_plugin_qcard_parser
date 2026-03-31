@@ -57,7 +57,7 @@ class CardParser:
         
         提取关键字段:
         - title: 应用名称
-        - preview: 预览图链接
+        - prompt: 卡片提示文本
         - jumpUrl: 跳转链接
         
         Args:
@@ -91,17 +91,6 @@ class CardParser:
             if not title and prompt:
                 title = CardParser._strip_prompt_prefix(prompt)
 
-            preview = CardParser._pick_str_by_paths(
-                data,
-                [
-                    ("preview",),
-                    ("meta", "detail_1", "preview"),
-                    ("meta", "detail", "preview"),
-                    ("meta", "news", "preview"),
-                    ("image",),
-                ],
-            )
-
             jump_url = CardParser._pick_str_by_paths(
                 data,
                 [
@@ -117,11 +106,11 @@ class CardParser:
             # 构造易读文本
             parts = ["[小程序]"]
 
+            if prompt:
+                parts.append(f"提示: {prompt}")
+
             if title:
                 parts.append(f"名称: {title}")
-
-            if preview:
-                parts.append(f"预览: {preview}")
 
             if jump_url:
                 parts.append(f"链接: {jump_url}")
