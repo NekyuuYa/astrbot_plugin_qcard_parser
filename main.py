@@ -96,10 +96,12 @@ class CardParser:
                 [
                     ("meta", "detail_1", "qqdocurl"),
                     ("meta", "detail", "qqdocurl"),
+                    ("meta", "news", "jumpUrl"),
                     ("jumpUrl",),
                     ("url",),
                     ("meta", "detail_1", "url"),
                     ("meta", "detail", "url"),
+                    ("meta", "news", "url"),
                 ],
             )
 
@@ -183,9 +185,12 @@ class CardParser:
                     ("meta", "news", "qqdocurl"),
                     ("meta", "detail_1", "qqdocurl"),
                     ("meta", "detail", "qqdocurl"),
+                    ("meta", "news", "jumpUrl"),
+                    ("meta", "detail_1", "jumpUrl"),
                     ("meta", "news", "url"),
                     ("meta", "detail_1", "url"),
                     ("meta", "detail", "url"),
+                    ("jumpUrl",),
                     ("url",),
                 ],
             )
