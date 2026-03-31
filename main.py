@@ -353,6 +353,59 @@ class Main(Star):
         reply.message_str = f"{existing}\n\n{merged}".strip() if existing else merged
         return parsed_texts
 
+    def _parse_cards_from_chain(self, chain: list[object] | None) -> list[str]:
+        """从消息链中提取并解析 Json 卡片文本。"""
+        if not isinstance(chain, list) or not chain:
+            return []
+
+        parsed_texts: list[str] = []
+        for seg in chain:
+            if isinstance(seg, Comp.Json):
+                parsed_text = self.parser.parse_json_card(seg.data)
+                if parsed_text:
+                    parsed_texts.append(parsed_text)
+        return parsed_texts
+
+    @filter.command("解析卡片")
+    async def parse_card_command(self, event: AstrMessageEvent) -> None:
+        """解析被引用消息中的 QQ 卡片。使用方式：引用消息并发送 /解析卡片"""
+        reply_components = [
+            comp for comp in event.message_obj.message if isinstance(comp, Comp.Reply)
+        ]
+
+        if not reply_components:
+            await event.send(
+                MessageChain().message("请先引用一条卡片消息，再发送 /解析卡片"),
+            )
+            return
+
+        all_parsed_texts: list[str] = []
+        for reply in reply_components:
+            # 优先从 reply.chain 解析
+            parsed_texts = self._parse_cards_from_chain(getattr(reply, "chain", None))
+            if parsed_texts:
+                all_parsed_texts.extend(parsed_texts)
+                continue
+
+            # 若 chain 不可用，尝试从已有 message_str 返回提示
+            reply_text = (getattr(reply, "message_str", "") or "").strip()
+            if reply_text and ("[小程序]" in reply_text or "[分享]" in reply_text):
+                all_parsed_texts.append(reply_text)
+
+        if not all_parsed_texts:
+            await event.send(
+                MessageChain().message(
+                    "未在引用消息中找到可解析的卡片 Json。"
+                    "\n提示：请引用 OneBot 下发的卡片消息（Json 组件）。",
+                ),
+            )
+            return
+
+        result = "\n\n".join(
+            [f"[解析结果 {idx}]\n{text}" for idx, text in enumerate(all_parsed_texts, 1)],
+        )
+        await event.send(MessageChain().message(result))
+
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 2)
     async def parse_qq_cards(self, event: AstrMessageEvent) -> None:
         """高优先级处理消息中的 QQ 卡片
