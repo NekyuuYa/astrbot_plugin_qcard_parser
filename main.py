@@ -104,13 +104,10 @@ class CardParser:
             )
 
             # 构造易读文本
-            parts = ["[小程序]"]
-
-            if prompt:
-                parts.append(f"提示: {prompt}")
+            parts = []
 
             if title:
-                parts.append(f"名称: {title}")
+                parts.append(f"标题: {title}")
 
             if jump_url:
                 parts.append(f"链接: {jump_url}")
@@ -401,9 +398,12 @@ class Main(Star):
             )
             return
 
-        result = "\n\n".join(
-            [f"[解析结果 {idx}]\n{text}" for idx, text in enumerate(all_parsed_texts, 1)],
-        )
+        if len(all_parsed_texts) == 1:
+            result = all_parsed_texts[0]
+        else:
+            result = "\n\n".join(
+                [f"[解析结果 {idx}]\n{text}" for idx, text in enumerate(all_parsed_texts, 1)],
+            )
         await event.send(MessageChain().message(result))
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 2)
