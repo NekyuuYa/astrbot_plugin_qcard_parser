@@ -319,6 +319,33 @@ class Main(Star):
             logger.debug(f"[QCard Parser] 加载配置失败: {e}，使用默认配置")
             self.verbose = False
 
+    def _augment_reply_chain(self, reply: Comp.Reply) -> list[str]:
+        """将 Reply 链中的 Json 卡片解析为 Plain 文本，便于引用链路读取。"""
+        chain = getattr(reply, "chain", None)
+        if not isinstance(chain, list) or not chain:
+            return []
+
+        parsed_texts: list[str] = []
+        for seg in chain:
+            if not isinstance(seg, Comp.Json):
+                continue
+            parsed_text = self.parser.parse_json_card(seg.data)
+            if parsed_text:
+                parsed_texts.append(parsed_text)
+
+        if not parsed_texts:
+            return []
+
+        # 注入 Plain 到 reply.chain，供 quoted_message 解析器读取
+        for text in parsed_texts:
+            chain.append(Comp.Plain(text=f"\n{text}"))
+
+        # 同步 reply.message_str，部分路径会直接读取该字段
+        existing = (getattr(reply, "message_str", "") or "").strip()
+        merged = "\n\n".join(parsed_texts)
+        reply.message_str = f"{existing}\n\n{merged}".strip() if existing else merged
+        return parsed_texts
+
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 2)
     async def parse_qq_cards(self, event: AstrMessageEvent) -> None:
         """高优先级处理消息中的 QQ 卡片
@@ -340,6 +367,19 @@ class Main(Star):
             for component in message_chain:
                 # 只处理 Json 组件（卡片消息）
                 if not isinstance(component, Comp.Json):
+                    # 处理引用链中的 Json 卡片
+                    if isinstance(component, Comp.Reply):
+                        reply_parsed = self._augment_reply_chain(component)
+                        if reply_parsed and self.verbose:
+                            logger.info(
+                                "[QCard Parser] 已为引用消息注入解析文本，条数: "
+                                f"{len(reply_parsed)}"
+                            )
+                        elif self.verbose and getattr(component, "id", None):
+                            logger.info(
+                                "[QCard Parser] 引用消息未含可解析 Json 链，"
+                                "若仅 reply_id 无 chain，插件层无法补全"
+                            )
                     continue
                 if self.verbose:
                     logger.info(f"[QCard Parser] 检测到 Json 组件: {str(component.data)[:100]}...")
