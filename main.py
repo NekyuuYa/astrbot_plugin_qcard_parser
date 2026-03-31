@@ -373,6 +373,47 @@ class Main(Star):
                     parsed_texts.append(parsed_text)
         return parsed_texts
 
+    async def _send_parse_result(
+        self,
+        event: AstrMessageEvent,
+        parsed_texts: list[str],
+    ) -> None:
+        """按长度条件发送解析结果：过长时使用合并转发。"""
+        if len(parsed_texts) == 1:
+            plain_result = parsed_texts[0]
+        else:
+            plain_result = "\n\n".join(
+                [
+                    f"[解析结果 {idx}]\n{text}"
+                    for idx, text in enumerate(parsed_texts, 1)
+                ],
+            )
+
+        cfg = self.context.get_config()
+        threshold = int(cfg.get("platform_settings", {}).get("forward_threshold", 1500))
+        use_forward = (
+            event.get_platform_name() == "aiocqhttp"
+            and len(plain_result) > threshold
+        )
+
+        if not use_forward:
+            await event.send(MessageChain().message(plain_result))
+            return
+
+        bot_name = event.get_self_id() or "AstrBot"
+        nodes: list[Comp.Node] = []
+        for idx, text in enumerate(parsed_texts, 1):
+            content = text if len(parsed_texts) == 1 else f"[解析结果 {idx}]\n{text}"
+            nodes.append(
+                Comp.Node(
+                    uin=event.get_self_id(),
+                    name=str(bot_name),
+                    content=[Comp.Plain(text=content)],
+                ),
+            )
+
+        await event.send(MessageChain([Comp.Nodes(nodes=nodes)]))
+
     @filter.command("解析卡片")
     async def parse_card_command(self, event: AstrMessageEvent) -> None:
         """解析被引用消息中的 QQ 卡片。使用方式：引用消息并发送 /解析卡片"""
@@ -408,13 +449,7 @@ class Main(Star):
             )
             return
 
-        if len(all_parsed_texts) == 1:
-            result = all_parsed_texts[0]
-        else:
-            result = "\n\n".join(
-                [f"[解析结果 {idx}]\n{text}" for idx, text in enumerate(all_parsed_texts, 1)],
-            )
-        await event.send(MessageChain().message(result))
+        await self._send_parse_result(event, all_parsed_texts)
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 2)
     async def parse_qq_cards(self, event: AstrMessageEvent) -> None:
