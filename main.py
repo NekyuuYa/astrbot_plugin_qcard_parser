@@ -13,7 +13,7 @@ from sys import maxsize
 from typing import Optional
 
 import astrbot.api.message_components as Comp
-from astrbot.api import logger
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
@@ -181,10 +181,40 @@ class Main(Star):
     将其转换为易读的文本，使 LLM 能够理解卡片内容。
     """
 
-    def __init__(self, context: Context) -> None:
+    def __init__(
+        self,
+        context: Context,
+        config: AstrBotConfig | None = None,
+    ) -> None:
         super().__init__(context)
         self.parser = CardParser()
+        self.context = context
+        self.config = config
+        self.verbose = False
+        self._load_config()
         logger.info("QQ Card Parser plugin loaded")
+    
+    def _load_config(self) -> None:
+        """加载插件配置。
+
+        优先级：
+        1. 插件 schema 注入配置（self.config）
+        2. 全局 provider_settings.qcard_parser（回退兼容）
+        """
+        try:
+            if self.config:
+                self.verbose = bool(self.config.get("verbose", False))
+            else:
+                cfg = self.context.get_config()
+                provider_settings = cfg.get("provider_settings", {})
+                qcard_settings = provider_settings.get("qcard_parser", {})
+                self.verbose = bool(qcard_settings.get("verbose", False))
+
+            if self.verbose:
+                logger.info("[QCard Parser] 详尽日志已启用")
+        except Exception as e:
+            logger.debug(f"[QCard Parser] 加载配置失败: {e}，使用默认配置")
+            self.verbose = False
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 2)
     async def parse_qq_cards(self, event: AstrMessageEvent) -> None:
@@ -204,10 +234,13 @@ class Main(Star):
             parsed_cards = []
 
             # 遍历消息链中的所有组件
-            for i, component in enumerate(message_chain):
+            for component in message_chain:
                 # 只处理 Json 组件（卡片消息）
                 if not isinstance(component, Comp.Json):
                     continue
+                if self.verbose:
+                    logger.info(f"[QCard Parser] 检测到 Json 组件: {str(component.data)[:100]}...")
+
 
                 # 尝试解析 JSON 卡片
                 raw_data = component.data
@@ -220,14 +253,18 @@ class Main(Star):
                     parsed_text = self.parser.parse_json_card(raw_data)
 
                 if parsed_text:
-                    parsed_cards.append((i, parsed_text))
-                    logger.debug(f"[QCard Parser] Successfully parsed: {parsed_text[:50]}")
+                    parsed_cards.append(parsed_text)
+                    if self.verbose:
+                        logger.info(f"[QCard Parser] 解析结果:\\n{parsed_text}")
+                    else:
+                        logger.debug(f"[QCard Parser] 成功解析卡片: {parsed_text[:50]}...")
+                elif self.verbose:
+                    logger.info("[QCard Parser] 未识别为可解析卡片，已跳过")
 
             # 如果成功解析了卡片，将其注入消息
             if parsed_cards:
                 # 构造卡片文本摘要
-                card_texts = [text for _, text in parsed_cards]
-                card_summary = "\n\n".join(card_texts)
+                card_summary = "\n\n".join(parsed_cards)
 
                 # 附加到 message_str，使 LLM 能够接收
                 if event.message_obj.message_str:
@@ -235,10 +272,19 @@ class Main(Star):
                 else:
                     event.message_obj.message_str = card_summary
 
-                logger.info(
-                    f"[QCard Parser] Injected {len(parsed_cards)} card(s) into message"
-                )
+                if self.verbose:
+                    logger.info(
+                        f"[QCard Parser] 已注入 {len(parsed_cards)} 个卡片到消息:\n{card_summary}"
+                    )
+                else:
+                    logger.debug(
+                        f"[QCard Parser] 已注入 {len(parsed_cards)} 个卡片到消息"
+                    )
 
         except Exception as e:
-            logger.error(f"[QCard Parser] Error: {e}", exc_info=True)
+            logger.error(f"[QCard Parser] 处理消息时出错: {e}", exc_info=True)
             # 不中断事件流，安全继续处理
+    
+    async def terminate(self) -> None:
+        """插件卸载时调用"""
+        logger.info("[QCard Parser] 插件已卸载")

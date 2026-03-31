@@ -1,0 +1,9 @@
+{
+  "verbose": {
+    "description": "启用详尽日志输出",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后会在控制台打印检测到的 Json 组件、解析结果和注入内容。用于排查插件是否生效。",
+    "obvious_hint": true
+  }
+}

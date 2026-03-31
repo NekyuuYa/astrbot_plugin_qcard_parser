@@ -1,0 +1,18 @@
+# QQ 卡片解析插件配置示例
+# 
+# 将此文件复制到 AstrBot 配置目录中并修改相应配置
+# 配置路径: config/config.yaml
+
+# 在 provider_settings 下添加以下配置：
+
+provider_settings:
+  # QQ 卡片解析插件配置
+  qcard_parser:
+    # 是否启用详尽日志输出
+    # 默认: false
+    # 设为 true 时，会在控制台输出每次卡片解析的详细信息，便于调试
+    # 包括:
+    #   - 检测到的 Json 组件信息
+    #   - 解析后的卡片文本
+    #   - 注入到消息的内容
+    verbose: false

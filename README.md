@@ -123,6 +123,29 @@ AstrBot/
 
 该插件 **无需配置**，启用后即可自动工作。
 
+### 详尽日志配置
+
+编辑 `config/config.yaml`，在 `provider_settings` 下添加配置以启用详尽日志：
+
+```yaml
+provider_settings:
+  qcard_parser:
+    verbose: true  # 启用后会输出详细的卡片解析过程
+```
+
+启用详尽日志后，会看到类似的输出：
+
+```
+[INFO] [QCard Parser] 详尽日志已启用
+[INFO] [QCard Parser] 检测到 Json 组件: {"app":"com.tencent.miniapp",...}
+[INFO] [QCard Parser] 解析结果:
+[小程序]
+名称: 天气预报
+预览: https://example.com/weather.png
+链接: pages/weather?city=beijing
+[INFO] [QCard Parser] 已注入 1 个卡片到消息
+```
+
 ### 高级配置（可选）
 
 如需修改解析行为，编辑 `main.py`：
