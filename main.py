@@ -106,8 +106,12 @@ class CardParser:
             # 构造易读文本
             parts = []
 
+            if prompt:
+                prompt_text = CardParser._strip_prompt_prefix(prompt)
+                parts.append(f"标题: {prompt_text}")
+
             if title:
-                parts.append(f"标题: {title}")
+                parts.append(f"来源: {title}")
 
             if jump_url:
                 parts.append(f"链接: {jump_url}")
