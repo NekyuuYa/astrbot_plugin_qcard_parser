@@ -94,12 +94,12 @@ class CardParser:
             jump_url = CardParser._pick_str_by_paths(
                 data,
                 [
+                    ("meta", "detail_1", "qqdocurl"),
+                    ("meta", "detail", "qqdocurl"),
                     ("jumpUrl",),
                     ("url",),
                     ("meta", "detail_1", "url"),
                     ("meta", "detail", "url"),
-                    ("meta", "detail_1", "qqdocurl"),
-                    ("meta", "detail", "qqdocurl"),
                 ],
             )
 
@@ -179,11 +179,12 @@ class CardParser:
             url = CardParser._pick_str_by_paths(
                 data,
                 [
+                    ("meta", "news", "qqdocurl"),
+                    ("meta", "detail_1", "qqdocurl"),
+                    ("meta", "detail", "qqdocurl"),
                     ("meta", "news", "url"),
                     ("meta", "detail_1", "url"),
                     ("meta", "detail", "url"),
-                    ("meta", "detail_1", "qqdocurl"),
-                    ("meta", "detail", "qqdocurl"),
                     ("url",),
                 ],
             )

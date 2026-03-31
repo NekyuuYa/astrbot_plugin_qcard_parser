@@ -293,6 +293,29 @@ def test_miniapp_prompt_only():
     print_test("小程序卡片 - prompt 兼容解析", passed)
 
 
+def test_miniapp_prefer_qqdocurl():
+    """测试12: 小程序卡片链接优先使用 qqdocurl"""
+    card = {
+        "app": "com.tencent.miniapp_01",
+        "prompt": "[QQ小程序]测试链接优先级",
+        "meta": {
+            "detail_1": {
+                "url": "m.q.qq.com/a/s/short_link",
+                "qqdocurl": "https://www.zhihu.com/question/xxx",
+            }
+        },
+    }
+
+    result = CardParser.parse_json_card(card)
+    passed = (
+        result
+        and "[小程序]" in result
+        and "https://www.zhihu.com/question/xxx" in result
+        and "m.q.qq.com/a/s/short_link" not in result
+    )
+    print_test("小程序卡片 - 优先 qqdocurl", passed)
+
+
 def main():
     """运行所有测试"""
     print("=" * 60)
@@ -305,6 +328,7 @@ def main():
         test_miniapp_minimal,
         test_miniapp_ignore_fields,
         test_miniapp_prompt_only,
+        test_miniapp_prefer_qqdocurl,
         test_link_share_basic,
         test_link_share_desc_truncate,
         test_link_share_ignore_fields,
