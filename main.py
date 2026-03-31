@@ -145,9 +145,10 @@ class CardParser:
             view = str(data.get("view", ""))
             prompt = str(data.get("prompt", "")).strip()
 
-            # 宽松识别：有些平台卡片缺失 app/view，但 prompt/meta 可判断为分享
+            # 宽松识别：支持结构消息卡片、第三方平台分享卡片
             is_share = (
                 (app == "com.tencent.structmsg" and view == "news")
+                or app.startswith("com.tencent.tuwen")
                 or prompt.startswith(("[分享]", "[链接]", "[网页]"))
             )
             if not is_share:
