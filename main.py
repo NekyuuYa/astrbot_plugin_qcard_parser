@@ -14,7 +14,7 @@ from typing import Optional
 
 import astrbot.api.message_components as Comp
 from astrbot.api import AstrBotConfig, logger
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 
 
@@ -283,6 +283,8 @@ class Main(Star):
         self.context = context
         self.config = config
         self.verbose = False
+        self.debug_echo_raw_json = False
+        self.debug_echo_max_chars = 2000
         self._load_config()
         logger.info("QQ Card Parser plugin loaded")
     
@@ -296,11 +298,26 @@ class Main(Star):
         try:
             if self.config:
                 self.verbose = bool(self.config.get("verbose", False))
+                self.debug_echo_raw_json = bool(
+                    self.config.get("debug_echo_raw_json", False),
+                )
+                self.debug_echo_max_chars = int(
+                    self.config.get("debug_echo_max_chars", 2000),
+                )
             else:
                 cfg = self.context.get_config()
                 provider_settings = cfg.get("provider_settings", {})
                 qcard_settings = provider_settings.get("qcard_parser", {})
                 self.verbose = bool(qcard_settings.get("verbose", False))
+                self.debug_echo_raw_json = bool(
+                    qcard_settings.get("debug_echo_raw_json", False),
+                )
+                self.debug_echo_max_chars = int(
+                    qcard_settings.get("debug_echo_max_chars", 2000),
+                )
+
+            if self.debug_echo_max_chars < 200:
+                self.debug_echo_max_chars = 200
 
             if self.verbose:
                 logger.info("[QCard Parser] 详尽日志已启用")
@@ -372,6 +389,29 @@ class Main(Star):
                     continue
                 if self.verbose:
                     logger.info(f"[QCard Parser] 检测到 Json 组件: {str(component.data)[:100]}...")
+
+                if self.debug_echo_raw_json:
+                    try:
+                        if isinstance(component.data, dict):
+                            raw_json_text = json.dumps(
+                                component.data,
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                        else:
+                            raw_json_text = str(component.data)
+                        if len(raw_json_text) > self.debug_echo_max_chars:
+                            raw_json_text = (
+                                raw_json_text[: self.debug_echo_max_chars]
+                                + "\n... (truncated)"
+                            )
+                        await event.send(
+                            MessageChain().message(
+                                "[QCard Debug] 收到原始 Json:\n" + raw_json_text,
+                            ),
+                        )
+                    except Exception as e:
+                        logger.warning(f"[QCard Parser] 回显原始 Json 失败: {e}")
 
 
                 # 尝试解析 JSON 卡片

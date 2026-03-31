@@ -5,5 +5,18 @@
     "default": false,
     "hint": "开启后会在控制台打印检测到的 Json 组件、解析结果和注入内容。用于排查插件是否生效。",
     "obvious_hint": true
+  },
+  "debug_echo_raw_json": {
+    "description": "收到 Json 后立即回显原始内容",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后会在聊天中立即发送一条调试消息，包含原始 Json 内容。仅建议调试时开启。",
+    "obvious_hint": true
+  },
+  "debug_echo_max_chars": {
+    "description": "原始 Json 回显最大字符数",
+    "type": "int",
+    "default": 2000,
+    "hint": "超过该长度会截断并追加 (truncated)。最小有效值 200。"
   }
 }
