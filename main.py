@@ -27,6 +27,31 @@ class CardParser:
     """
 
     @staticmethod
+    def _pick_str_by_paths(data: dict, paths: list[tuple[str, ...]]) -> str:
+        """按路径列表提取第一个非空字符串值。"""
+        for path in paths:
+            current = data
+            ok = True
+            for key in path:
+                if not isinstance(current, dict) or key not in current:
+                    ok = False
+                    break
+                current = current[key]
+            if ok and isinstance(current, str):
+                value = current.strip()
+                if value:
+                    return value
+        return ""
+
+    @staticmethod
+    def _strip_prompt_prefix(prompt: str) -> str:
+        text = prompt.strip()
+        for prefix in ("[QQ小程序]", "[小程序]", "[分享]", "[链接]", "[网页]"):
+            if text.startswith(prefix):
+                return text[len(prefix) :].strip()
+        return text
+
+    @staticmethod
     def parse_miniapp_card(data: dict) -> Optional[str]:
         """解析小程序卡片
         
@@ -42,14 +67,52 @@ class CardParser:
             易读的文本内容，如果不是小程序卡片返回 None
         """
         try:
-            # 验证是否为小程序卡片
-            if data.get("app") != "com.tencent.miniapp":
+            app = str(data.get("app", ""))
+            prompt = str(data.get("prompt", "")).strip()
+
+            # 兼容：部分 QQ 小程序卡片没有 app 字段，只能通过 prompt 识别
+            is_miniapp = app == "com.tencent.miniapp" or prompt.startswith(
+                ("[QQ小程序]", "[小程序]"),
+            )
+            if not is_miniapp:
                 return None
 
             # 提取关键字段（忽略 icon, appID 等无用参数）
-            title = data.get("title", "").strip()
-            preview = data.get("preview", "").strip()
-            jump_url = data.get("jumpUrl", "").strip()
+            title = CardParser._pick_str_by_paths(
+                data,
+                [
+                    ("title",),
+                    ("meta", "detail_1", "title"),
+                    ("meta", "detail", "title"),
+                    ("meta", "news", "title"),
+                    ("desc",),
+                ],
+            )
+            if not title and prompt:
+                title = CardParser._strip_prompt_prefix(prompt)
+
+            preview = CardParser._pick_str_by_paths(
+                data,
+                [
+                    ("preview",),
+                    ("meta", "detail_1", "preview"),
+                    ("meta", "detail", "preview"),
+                    ("meta", "news", "preview"),
+                    ("image",),
+                ],
+            )
+
+            jump_url = CardParser._pick_str_by_paths(
+                data,
+                [
+                    ("jumpUrl",),
+                    ("url",),
+                    ("meta", "detail_1", "url"),
+                    ("meta", "detail", "url"),
+                    ("meta", "detail_1", "qqdocurl"),
+                    ("meta", "detail", "qqdocurl"),
+                ],
+            )
 
             # 构造易读文本
             parts = ["[小程序]"]
@@ -86,27 +149,67 @@ class CardParser:
             易读的文本内容，如果不是链接分享卡片返回 None
         """
         try:
-            # 验证是否为链接分享卡片
-            if data.get("app") != "com.tencent.structmsg":
-                return None
-            if data.get("view") != "news":
+            app = str(data.get("app", ""))
+            view = str(data.get("view", ""))
+            prompt = str(data.get("prompt", "")).strip()
+
+            # 宽松识别：有些平台卡片缺失 app/view，但 prompt/meta 可判断为分享
+            is_share = (
+                (app == "com.tencent.structmsg" and view == "news")
+                or prompt.startswith(("[分享]", "[链接]", "[网页]"))
+            )
+            if not is_share:
                 return None
 
             # 提取 meta.news 下的内容
             meta = data.get("meta", {})
             news = meta.get("news", {})
 
-            if not isinstance(news, dict):
-                return None
-
             # 提取关键字段（忽略 appid, preview, source_icon 等无用参数）
-            title = news.get("title", "").strip()
-            desc = news.get("desc", "").strip()
-            url = news.get("url", "").strip()
-            tag = news.get("tag", "").strip()
+            title = CardParser._pick_str_by_paths(
+                data,
+                [
+                    ("meta", "news", "title"),
+                    ("meta", "detail_1", "title"),
+                    ("meta", "detail", "title"),
+                    ("title",),
+                ],
+            )
+            if not title and prompt:
+                title = CardParser._strip_prompt_prefix(prompt)
+
+            desc = CardParser._pick_str_by_paths(
+                data,
+                [
+                    ("meta", "news", "desc"),
+                    ("meta", "detail_1", "desc"),
+                    ("meta", "detail", "desc"),
+                    ("desc",),
+                ],
+            )
+            url = CardParser._pick_str_by_paths(
+                data,
+                [
+                    ("meta", "news", "url"),
+                    ("meta", "detail_1", "url"),
+                    ("meta", "detail", "url"),
+                    ("meta", "detail_1", "qqdocurl"),
+                    ("meta", "detail", "qqdocurl"),
+                    ("url",),
+                ],
+            )
+            tag = CardParser._pick_str_by_paths(
+                data,
+                [
+                    ("meta", "news", "tag"),
+                    ("meta", "detail_1", "tag"),
+                    ("meta", "detail", "tag"),
+                    ("source",),
+                ],
+            )
 
             # 如果没有有用的信息，返回 None
-            if not title and not desc:
+            if not title and not desc and not url:
                 return None
 
             # 构造易读文本
@@ -255,7 +358,7 @@ class Main(Star):
                 if parsed_text:
                     parsed_cards.append(parsed_text)
                     if self.verbose:
-                        logger.info(f"[QCard Parser] 解析结果:\\n{parsed_text}")
+                        logger.info(f"[QCard Parser] 解析结果:\n{parsed_text}")
                     else:
                         logger.debug(f"[QCard Parser] 成功解析卡片: {parsed_text[:50]}...")
                 elif self.verbose:

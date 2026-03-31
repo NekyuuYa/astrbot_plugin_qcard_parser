@@ -270,6 +270,29 @@ def test_link_share_minimal():
     print_test("链接分享卡片 - 最小信息", passed)
 
 
+def test_miniapp_prompt_only():
+    """测试11: prompt 型 QQ 小程序卡片（无 app 字段）"""
+    card = {
+        "ver": "1.0.0.19",
+        "prompt": "[QQ小程序]仅凭ai真的能做好复杂项目吗？",
+        "config": {"type": "normal"},
+        "meta": {
+            "detail_1": {
+                "qqdocurl": "https://example.com/miniapp/article",
+            }
+        },
+    }
+
+    result = CardParser.parse_json_card(card)
+    passed = (
+        result
+        and "[小程序]" in result
+        and "仅凭ai真的能做好复杂项目吗？" in result
+        and "https://example.com/miniapp/article" in result
+    )
+    print_test("小程序卡片 - prompt 兼容解析", passed)
+
+
 def main():
     """运行所有测试"""
     print("=" * 60)
@@ -281,6 +304,7 @@ def main():
         test_miniapp_basic,
         test_miniapp_minimal,
         test_miniapp_ignore_fields,
+        test_miniapp_prompt_only,
         test_link_share_basic,
         test_link_share_desc_truncate,
         test_link_share_ignore_fields,
