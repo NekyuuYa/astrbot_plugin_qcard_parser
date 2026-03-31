@@ -293,6 +293,8 @@ class Main(Star):
         self.verbose = False
         self.debug_echo_raw_json = False
         self.debug_echo_max_chars = 2000
+        self.parse_command_use_forward = True
+        self.parse_command_forward_threshold = 1500
         self._load_config()
         logger.info("QQ Card Parser plugin loaded")
     
@@ -312,6 +314,12 @@ class Main(Star):
                 self.debug_echo_max_chars = int(
                     self.config.get("debug_echo_max_chars", 2000),
                 )
+                self.parse_command_use_forward = bool(
+                    self.config.get("parse_command_use_forward", True),
+                )
+                self.parse_command_forward_threshold = int(
+                    self.config.get("parse_command_forward_threshold", 1500),
+                )
             else:
                 cfg = self.context.get_config()
                 provider_settings = cfg.get("provider_settings", {})
@@ -323,9 +331,18 @@ class Main(Star):
                 self.debug_echo_max_chars = int(
                     qcard_settings.get("debug_echo_max_chars", 2000),
                 )
+                self.parse_command_use_forward = bool(
+                    qcard_settings.get("parse_command_use_forward", True),
+                )
+                self.parse_command_forward_threshold = int(
+                    qcard_settings.get("parse_command_forward_threshold", 1500),
+                )
 
             if self.debug_echo_max_chars < 200:
                 self.debug_echo_max_chars = 200
+
+            if self.parse_command_forward_threshold < 200:
+                self.parse_command_forward_threshold = 200
 
             if self.verbose:
                 logger.info("[QCard Parser] 详尽日志已启用")
@@ -389,10 +406,11 @@ class Main(Star):
                 ],
             )
 
-        cfg = self.context.get_config()
-        threshold = int(cfg.get("platform_settings", {}).get("forward_threshold", 1500))
+        threshold = self.parse_command_forward_threshold
         use_forward = (
-            event.get_platform_name() == "aiocqhttp"
+            self.parse_command_use_forward
+            and threshold > 0
+            and event.get_platform_name() == "aiocqhttp"
             and len(plain_result) > threshold
         )
 

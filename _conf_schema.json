@@ -18,5 +18,18 @@
     "type": "int",
     "default": 2000,
     "hint": "超过该长度会截断并追加 (truncated)。最小有效值 200。"
+  },
+  "parse_command_use_forward": {
+    "description": "解析指令超长结果使用转发折叠",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后，/解析卡片 结果超过阈值会改为合并转发发送（仅 QQ aiocqhttp 平台生效）。",
+    "obvious_hint": true
+  },
+  "parse_command_forward_threshold": {
+    "description": "解析指令转发折叠阈值",
+    "type": "int",
+    "default": 1500,
+    "hint": "当 /解析卡片 结果字符数超过该值时，自动使用合并转发发送。最小有效值 200。"
   }
 }
