@@ -1,0 +1,5 @@
+name: "qcard-parser"
+version: "1.0.0"
+desc: "QQ 卡片消息解析插件，将 OneBot 传递的卡片 JSON 转换为结构化可读文本"
+author: "NekyuuYa"
+repo: "https://github.com/NekyuuYa/astrbot_plugin_qcard_parser"
