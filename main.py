@@ -369,7 +369,13 @@ class Main(Star):
                 # 构造卡片文本摘要
                 card_summary = "\n\n".join(parsed_cards)
 
-                # 附加到 message_str，使 LLM 能够接收
+                # 同步附加到 event.message_str 与 message_obj.message_str。
+                # Main Agent 构建请求时读取的是 event.message_str。
+                if event.message_str:
+                    event.message_str += f"\n\n{card_summary}"
+                else:
+                    event.message_str = card_summary
+
                 if event.message_obj.message_str:
                     event.message_obj.message_str += f"\n\n{card_summary}"
                 else:
