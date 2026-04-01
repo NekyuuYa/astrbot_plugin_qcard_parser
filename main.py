@@ -52,6 +52,16 @@ class CardParser:
         return text
 
     @staticmethod
+    def _clean_music_url(url: str) -> str:
+        """清理音乐链接中的冗长参数。"""
+        if not url:
+            return ""
+        # 只保留 ? 前面的部分（去掉所有查询参数）
+        if "?" in url:
+            return url.split("?")[0]
+        return url
+
+    @staticmethod
     def parse_miniapp_card(data: dict) -> Optional[str]:
         """解析小程序卡片
         
@@ -282,6 +292,9 @@ class CardParser:
                 music,
                 [("jumpUrl",), ("musicUrl",), ("url",)],
             )
+            # 清理 URL 中的冗长参数
+            if url:
+                url = CardParser._clean_music_url(url)
             tag = CardParser._pick_str_by_paths(
                 music,
                 [("tag",), ("source",)],
