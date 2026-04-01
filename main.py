@@ -519,34 +519,45 @@ class Main(Star):
                     parsed_texts.append(parsed_text)
         return parsed_texts
 
-    async def _send_parse_result(
-        self,
-        event: AstrMessageEvent,
-        parsed_texts: list[str],
-    ) -> None:
-        """按长度条件发送解析结果：过长时使用合并转发。"""
-        if len(parsed_texts) == 1:
-            plain_result = parsed_texts[0]
-        else:
-            plain_result = "\n\n".join(
-                [
-                    f"[解析结果 {idx}]\n{text}"
-                    for idx, text in enumerate(parsed_texts, 1)
-                ],
-            )
+    def _collect_parsed_from_replies(self, replies: list[Comp.Reply]) -> list[str]:
+        """从回复组件中收集可解析卡片文本。"""
+        all_parsed_texts: list[str] = []
+        for reply in replies:
+            parsed_texts = self._parse_cards_from_chain(getattr(reply, "chain", None))
+            if parsed_texts:
+                all_parsed_texts.extend(parsed_texts)
+                continue
 
+            reply_text = (getattr(reply, "message_str", "") or "").strip()
+            if reply_text and ("[小程序]" in reply_text or "[分享]" in reply_text):
+                all_parsed_texts.append(reply_text)
+        return all_parsed_texts
+
+    @staticmethod
+    def _format_parse_result(parsed_texts: list[str]) -> str:
+        """格式化解析结果文本。"""
+        if len(parsed_texts) == 1:
+            return parsed_texts[0]
+        return "\n\n".join(
+            [f"[解析结果 {idx}]\n{text}" for idx, text in enumerate(parsed_texts, 1)],
+        )
+
+    def _should_use_forward(self, event: AstrMessageEvent, plain_result: str) -> bool:
+        """判断是否应使用合并转发发送。"""
         threshold = self.parse_command_forward_threshold
-        use_forward = (
+        return (
             self.parse_command_use_forward
             and threshold > 0
             and event.get_platform_name() == "aiocqhttp"
             and len(plain_result) > threshold
         )
 
-        if not use_forward:
-            await event.send(MessageChain().message(plain_result))
-            return
-
+    def _build_forward_nodes(
+        self,
+        event: AstrMessageEvent,
+        parsed_texts: list[str],
+    ) -> list[Comp.Node]:
+        """构造合并转发节点。"""
         bot_name = event.get_self_id() or "AstrBot"
         nodes: list[Comp.Node] = []
         for idx, text in enumerate(parsed_texts, 1):
@@ -558,8 +569,88 @@ class Main(Star):
                     content=[Comp.Plain(text=content)],
                 ),
             )
+        return nodes
 
-        await event.send(MessageChain([Comp.Nodes(nodes=nodes)]))
+    async def _echo_raw_json_if_needed(
+        self,
+        event: AstrMessageEvent,
+        component: Comp.Json,
+    ) -> None:
+        """按配置回显原始 Json 调试信息。"""
+        if not self.debug_echo_raw_json:
+            return
+
+        try:
+            if isinstance(component.data, dict):
+                raw_json_text = json.dumps(
+                    component.data,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            else:
+                raw_json_text = str(component.data)
+
+            if len(raw_json_text) > self.debug_echo_max_chars:
+                raw_json_text = (
+                    raw_json_text[: self.debug_echo_max_chars]
+                    + "\n... (truncated)"
+                )
+
+            await event.send(
+                MessageChain().message("[QCard Debug] 收到原始 Json:\n" + raw_json_text),
+            )
+        except Exception as e:
+            logger.warning(f"[QCard Parser] 回显原始 Json 失败: {e}")
+
+    @staticmethod
+    def _append_summary(existing: str | None, summary: str) -> str:
+        """将摘要追加到既有 message_str。"""
+        if existing:
+            return f"{existing}\n\n{summary}"
+        return summary
+
+    def _inject_parsed_cards_to_event(
+        self,
+        event: AstrMessageEvent,
+        parsed_cards: list[str],
+    ) -> None:
+        """将解析后的卡片摘要注入事件文本上下文。"""
+        card_summary = "\n\n".join(parsed_cards)
+        event.message_str = self._append_summary(event.message_str, card_summary)
+        event.message_obj.message_str = self._append_summary(
+            event.message_obj.message_str,
+            card_summary,
+        )
+
+        if self.verbose:
+            logger.info(
+                f"[QCard Parser] 已注入 {len(parsed_cards)} 个卡片到消息:\n{card_summary}"
+            )
+        else:
+            logger.debug(f"[QCard Parser] 已注入 {len(parsed_cards)} 个卡片到消息")
+
+    def _parse_json_component(self, component: Comp.Json) -> Optional[str]:
+        """解析单个 Json 组件。"""
+        raw_data = component.data
+        if isinstance(raw_data, dict):
+            return self.parser.parse_json_card(raw_data)
+        if isinstance(raw_data, str):
+            return self.parser.parse_json_card(raw_data)
+        return None
+
+    async def _send_parse_result(
+        self,
+        event: AstrMessageEvent,
+        parsed_texts: list[str],
+    ) -> None:
+        """按长度条件发送解析结果：过长时使用合并转发。"""
+        plain_result = self._format_parse_result(parsed_texts)
+
+        if not self._should_use_forward(event, plain_result):
+            await event.send(MessageChain().message(plain_result))
+            return
+
+        await event.send(MessageChain([Comp.Nodes(nodes=self._build_forward_nodes(event, parsed_texts))]))
 
     @filter.command("解析卡片")
     async def parse_card_command(self, event: AstrMessageEvent) -> None:
@@ -574,18 +665,7 @@ class Main(Star):
             )
             return
 
-        all_parsed_texts: list[str] = []
-        for reply in reply_components:
-            # 优先从 reply.chain 解析
-            parsed_texts = self._parse_cards_from_chain(getattr(reply, "chain", None))
-            if parsed_texts:
-                all_parsed_texts.extend(parsed_texts)
-                continue
-
-            # 若 chain 不可用，尝试从已有 message_str 返回提示
-            reply_text = (getattr(reply, "message_str", "") or "").strip()
-            if reply_text and ("[小程序]" in reply_text or "[分享]" in reply_text):
-                all_parsed_texts.append(reply_text)
+        all_parsed_texts = self._collect_parsed_from_replies(reply_components)
 
         if not all_parsed_texts:
             await event.send(
@@ -636,39 +716,8 @@ class Main(Star):
                 if self.verbose:
                     logger.info(f"[QCard Parser] 检测到 Json 组件: {str(component.data)[:100]}...")
 
-                if self.debug_echo_raw_json:
-                    try:
-                        if isinstance(component.data, dict):
-                            raw_json_text = json.dumps(
-                                component.data,
-                                ensure_ascii=False,
-                                indent=2,
-                            )
-                        else:
-                            raw_json_text = str(component.data)
-                        if len(raw_json_text) > self.debug_echo_max_chars:
-                            raw_json_text = (
-                                raw_json_text[: self.debug_echo_max_chars]
-                                + "\n... (truncated)"
-                            )
-                        await event.send(
-                            MessageChain().message(
-                                "[QCard Debug] 收到原始 Json:\n" + raw_json_text,
-                            ),
-                        )
-                    except Exception as e:
-                        logger.warning(f"[QCard Parser] 回显原始 Json 失败: {e}")
-
-
-                # 尝试解析 JSON 卡片
-                raw_data = component.data
-                parsed_text = None
-
-                if isinstance(raw_data, dict):
-                    parsed_text = self.parser.parse_json_card(raw_data)
-                elif isinstance(raw_data, str):
-                    # 某些情况下 data 可能是字符串
-                    parsed_text = self.parser.parse_json_card(raw_data)
+                await self._echo_raw_json_if_needed(event, component)
+                parsed_text = self._parse_json_component(component)
 
                 if parsed_text:
                     parsed_cards.append(parsed_text)
@@ -681,29 +730,7 @@ class Main(Star):
 
             # 如果成功解析了卡片，将其注入消息
             if parsed_cards:
-                # 构造卡片文本摘要
-                card_summary = "\n\n".join(parsed_cards)
-
-                # 同步附加到 event.message_str 与 message_obj.message_str。
-                # Main Agent 构建请求时读取的是 event.message_str。
-                if event.message_str:
-                    event.message_str += f"\n\n{card_summary}"
-                else:
-                    event.message_str = card_summary
-
-                if event.message_obj.message_str:
-                    event.message_obj.message_str += f"\n\n{card_summary}"
-                else:
-                    event.message_obj.message_str = card_summary
-
-                if self.verbose:
-                    logger.info(
-                        f"[QCard Parser] 已注入 {len(parsed_cards)} 个卡片到消息:\n{card_summary}"
-                    )
-                else:
-                    logger.debug(
-                        f"[QCard Parser] 已注入 {len(parsed_cards)} 个卡片到消息"
-                    )
+                self._inject_parsed_cards_to_event(event, parsed_cards)
 
         except Exception as e:
             logger.error(f"[QCard Parser] 处理消息时出错: {e}", exc_info=True)
