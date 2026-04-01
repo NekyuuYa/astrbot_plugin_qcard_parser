@@ -53,35 +53,47 @@ class CardParser:
 
     @staticmethod
     def _clean_music_url(url: str) -> str:
-        """清理音乐链接中的冗长参数，仅保留关键参数。"""
+        """清理音乐链接中的冗长参数，支持特殊重构。"""
         if not url:
             return ""
         
-        # 分离基础 URL 和查询字符串
+        # QQ 音乐 URL 特殊处理：提取 songmid 並重构为简洁重定向 URL
+        if "y.qq.com" in url or "i.y.qq.com" in url:
+            if "?" in url:
+                query_str = url.split("?", 1)[1]
+                # 提取 songmid 参数
+                for param in query_str.split("&"):
+                    if "=" in param:
+                        key, value = param.split("=", 1)
+                        if key.lower() == "songmid" and value:
+                            return f"https://y.qq.com/n/ryqq_v2/songDetail/{value}"
+            return url
+        
+        # 网批 URL 处理：只保留 ? 前面（重洁向网批正常板），保留 id 参数
+        if "music.163.com" in url:
+            if "?" not in url:
+                return url
+            
+            parts = url.split("?", 1)
+            base_url = parts[0]
+            query_str = parts[1] if len(parts) > 1 else ""
+            
+            # 网批 API 可能有不同的形式，优先返回并去参数
+            if "/song" in base_url:
+                # 尤其是 m.music.163.com 的桌面会跳鍵，只保留 id
+                for param in query_str.split("&"):
+                    if "=" in param:
+                        key, value = param.split("=", 1)
+                        if key.lower() == "id" and value:
+                            return f"{base_url}?id={value}"
+            
+            return base_url
+        
+        # 其他音乐平台 URL 默认处理：保留基本 URL 去参数
         if "?" not in url:
             return url
         
-        parts = url.split("?", 1)
-        base_url = parts[0]
-        query_str = parts[1] if len(parts) > 1 else ""
-        
-        if not query_str:
-            return base_url
-        
-        # 保留的正常参数，其他参数丢弃
-        keep_params = {"id", "song_id", "album_id", "artist_id", "playlist_id"}
-        
-        # 解析参数
-        result_params = []
-        for param in query_str.split("&"):
-            if "=" in param:
-                key = param.split("=")[0].lower()
-                if key in keep_params:
-                    result_params.append(param)
-        
-        if result_params:
-            return f"{base_url}?{'&'.join(result_params)}"
-        return base_url
+        return url.split("?")[0]
 
     @staticmethod
     def parse_miniapp_card(data: dict) -> Optional[str]:
