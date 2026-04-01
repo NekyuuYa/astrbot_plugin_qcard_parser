@@ -89,11 +89,8 @@ class CardParser:
             
             return base_url
         
-        # 其他音乐平台 URL 默认处理：保留基本 URL 去参数
-        if "?" not in url:
-            return url
-        
-        return url.split("?")[0]
+        # 其他音乐平台不做清理，保留完整参数确保可用性
+        return url
 
     @staticmethod
     def parse_miniapp_card(data: dict) -> Optional[str]:
