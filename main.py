@@ -1,11 +1,5 @@
 """
-QQ 卡片消息解析插件 - 独立版本
-
-支持解析:
-1. 小程序卡片 (app="com.tencent.miniapp")
-2. 链接分享卡片 (app="com.tencent.structmsg", view="news")
-
-将卡片转换为易读的结构化文本，便于 LLM 理解。
+QQ card parser plugin.
 """
 
 import json
@@ -17,398 +11,13 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 
-
-class CardParser:
-    """QQ 卡片消息解析器
-    
-    支持的卡片类型:
-    - 小程序卡片 (com.tencent.miniapp)
-    - 链接分享卡片 (com.tencent.structmsg + view=news)
-    """
-
-    @staticmethod
-    def _pick_str_by_paths(data: dict, paths: list[tuple[str, ...]]) -> str:
-        """按路径列表提取第一个非空字符串值。"""
-        for path in paths:
-            current = data
-            ok = True
-            for key in path:
-                if not isinstance(current, dict) or key not in current:
-                    ok = False
-                    break
-                current = current[key]
-            if ok and isinstance(current, str):
-                value = current.strip()
-                if value:
-                    return value
-        return ""
-
-    @staticmethod
-    def _strip_prompt_prefix(prompt: str) -> str:
-        text = prompt.strip()
-        for prefix in ("[QQ小程序]", "[小程序]", "[分享]", "[链接]", "[网页]"):
-            if text.startswith(prefix):
-                return text[len(prefix) :].strip()
-        return text
-
-    @staticmethod
-    def _clean_music_url(url: str) -> str:
-        """清理音乐链接中的冗长参数，支持特殊重构。"""
-        if not url:
-            return ""
-        
-        # QQ 音乐 URL 特殊处理：提取 songmid 並重构为简洁重定向 URL
-        if "y.qq.com" in url or "i.y.qq.com" in url:
-            if "?" in url:
-                query_str = url.split("?", 1)[1]
-                # 提取 songmid 参数
-                for param in query_str.split("&"):
-                    if "=" in param:
-                        key, value = param.split("=", 1)
-                        if key.lower() == "songmid" and value:
-                            return f"https://y.qq.com/n/ryqq_v2/songDetail/{value}"
-            return url
-        
-        # 网批 URL 处理：只保留 ? 前面（重洁向网批正常板），保留 id 参数
-        if "music.163.com" in url:
-            if "?" not in url:
-                return url
-            
-            parts = url.split("?", 1)
-            base_url = parts[0]
-            query_str = parts[1] if len(parts) > 1 else ""
-            
-            # 网批 API 可能有不同的形式，优先返回并去参数
-            if "/song" in base_url:
-                # 尤其是 m.music.163.com 的桌面会跳鍵，只保留 id
-                for param in query_str.split("&"):
-                    if "=" in param:
-                        key, value = param.split("=", 1)
-                        if key.lower() == "id" and value:
-                            return f"{base_url}?id={value}"
-            
-            return base_url
-        
-        # 其他音乐平台不做清理，保留完整参数确保可用性
-        return url
-
-    @staticmethod
-    def parse_miniapp_card(data: dict) -> Optional[str]:
-        """解析小程序卡片
-        
-        提取关键字段:
-        - title: 应用名称
-        - prompt: 卡片提示文本
-        - jumpUrl: 跳转链接
-        
-        Args:
-            data: JSON 卡片数据字典
-            
-        Returns:
-            易读的文本内容，如果不是小程序卡片返回 None
-        """
-        try:
-            app = str(data.get("app", ""))
-            prompt = str(data.get("prompt", "")).strip()
-
-            # 兼容：部分 QQ 小程序卡片没有 app 字段，只能通过 prompt 识别
-            is_miniapp = app == "com.tencent.miniapp" or prompt.startswith(
-                ("[QQ小程序]", "[小程序]"),
-            )
-            if not is_miniapp:
-                return None
-
-            # 提取关键字段（忽略 icon, appID 等无用参数）
-            title = CardParser._pick_str_by_paths(
-                data,
-                [
-                    ("title",),
-                    ("meta", "detail_1", "title"),
-                    ("meta", "detail", "title"),
-                    ("meta", "news", "title"),
-                    ("desc",),
-                ],
-            )
-            if not title and prompt:
-                title = CardParser._strip_prompt_prefix(prompt)
-
-            jump_url = CardParser._pick_str_by_paths(
-                data,
-                [
-                    ("meta", "detail_1", "qqdocurl"),
-                    ("meta", "detail", "qqdocurl"),
-                    ("meta", "news", "jumpUrl"),
-                    ("jumpUrl",),
-                    ("url",),
-                    ("meta", "detail_1", "url"),
-                    ("meta", "detail", "url"),
-                    ("meta", "news", "url"),
-                ],
-            )
-
-            # 构造易读文本
-            parts = []
-
-            if prompt:
-                prompt_text = CardParser._strip_prompt_prefix(prompt)
-                parts.append(f"标题: {prompt_text}")
-
-            if title:
-                parts.append(f"来源: {title}")
-
-            if jump_url:
-                parts.append(f"链接: {jump_url}")
-
-            return "\n".join(parts)
-
-        except Exception as e:
-            logger.debug(f"Failed to parse miniapp card: {e}")
-            return None
-
-    @staticmethod
-    def parse_link_share_card(data: dict) -> Optional[str]:
-        """解析链接分享卡片
-        
-        提取关键字段:
-        - meta.news.title: 网页标题
-        - meta.news.desc: 网页描述
-        - meta.news.tag: 来源标签
-        - meta.news.url: 目标链接
-        
-        Args:
-            data: JSON 卡片数据字典
-            
-        Returns:
-            易读的文本内容，如果不是链接分享卡片返回 None
-        """
-        try:
-            app = str(data.get("app", ""))
-            view = str(data.get("view", ""))
-            prompt = str(data.get("prompt", "")).strip()
-
-            # 宽松识别：支持结构消息卡片、第三方平台分享卡片
-            is_share = (
-                (app == "com.tencent.structmsg" and view == "news")
-                or app.startswith("com.tencent.tuwen")
-                or prompt.startswith(("[分享]", "[链接]", "[网页]"))
-            )
-            if not is_share:
-                return None
-
-            # 提取 meta.news 下的内容
-            meta = data.get("meta", {})
-            news = meta.get("news", {})
-
-            # 提取关键字段（忽略 appid, preview, source_icon 等无用参数）
-            title = CardParser._pick_str_by_paths(
-                data,
-                [
-                    ("meta", "news", "title"),
-                    ("meta", "detail_1", "title"),
-                    ("meta", "detail", "title"),
-                    ("title",),
-                ],
-            )
-            if not title and prompt:
-                title = CardParser._strip_prompt_prefix(prompt)
-
-            desc = CardParser._pick_str_by_paths(
-                data,
-                [
-                    ("meta", "news", "desc"),
-                    ("meta", "detail_1", "desc"),
-                    ("meta", "detail", "desc"),
-                    ("desc",),
-                ],
-            )
-            url = CardParser._pick_str_by_paths(
-                data,
-                [
-                    ("meta", "news", "qqdocurl"),
-                    ("meta", "detail_1", "qqdocurl"),
-                    ("meta", "detail", "qqdocurl"),
-                    ("meta", "news", "jumpUrl"),
-                    ("meta", "detail_1", "jumpUrl"),
-                    ("meta", "news", "url"),
-                    ("meta", "detail_1", "url"),
-                    ("meta", "detail", "url"),
-                    ("jumpUrl",),
-                    ("url",),
-                ],
-            )
-            tag = CardParser._pick_str_by_paths(
-                data,
-                [
-                    ("meta", "news", "tag"),
-                    ("meta", "detail_1", "tag"),
-                    ("meta", "detail", "tag"),
-                    ("source",),
-                ],
-            )
-
-            # 如果没有有用的信息，返回 None
-            if not title and not desc and not url:
-                return None
-
-            # 构造易读文本
-            parts = ["[分享]"]
-
-            if title:
-                parts.append(f"标题: {title}")
-
-            if desc:
-                # 如果描述很长，截断处理（防止 LLM 处理困难）
-                if len(desc) > 100:
-                    desc = desc[:100] + "..."
-                parts.append(f"描述: {desc}")
-
-            if tag:
-                parts.append(f"来源: {tag}")
-
-            if url:
-                parts.append(f"链接: {url}")
-
-            return "\n".join(parts)
-
-        except Exception as e:
-            logger.debug(f"Failed to parse link share card: {e}")
-            return None
-
-    @staticmethod
-    def parse_music_card(data: dict) -> Optional[str]:
-        """解析音乐卡片
-        
-        提取关键字段:
-        - meta.music.title: 歌曲名
-        - meta.music.desc: 艺术家
-        - meta.music.tag: 音乐平台来源
-        - meta.music.jumpUrl: 跳转链接
-        
-        Args:
-            data: JSON 卡片数据字典
-            
-        Returns:
-            易读的文本内容，如果不是音乐卡片返回 None
-        """
-        try:
-            app = str(data.get("app", ""))
-            view = str(data.get("view", ""))
-            prompt = str(data.get("prompt", "")).strip()
-
-            # 识别音乐卡片
-            is_music = (
-                app.startswith("com.tencent.music")
-                and view == "music"
-            ) or prompt.startswith("[分享]")
-            if not is_music:
-                return None
-
-            # 提取 meta.music 下的内容
-            meta = data.get("meta", {})
-            music = meta.get("music", {})
-
-            if not music:
-                return None
-
-            # 提取关键字段
-            title = CardParser._pick_str_by_paths(
-                music,
-                [("title",)],
-            )
-            artist = CardParser._pick_str_by_paths(
-                music,
-                [("desc",)],
-            )
-            url = CardParser._pick_str_by_paths(
-                music,
-                [("jumpUrl",), ("musicUrl",), ("url",)],
-            )
-            # 清理 URL 中的冗长参数
-            if url:
-                url = CardParser._clean_music_url(url)
-            tag = CardParser._pick_str_by_paths(
-                music,
-                [("tag",), ("source",)],
-            )
-
-            # 如果没有歌曲名，返回 None
-            if not title:
-                return None
-
-            # 构造易读文本
-            parts = ["[音乐]"]
-
-            if title:
-                parts.append(f"歌曲: {title}")
-
-            if artist:
-                parts.append(f"艺术家: {artist}")
-
-            if tag:
-                parts.append(f"来源: {tag}")
-
-            if url:
-                parts.append(f"链接: {url}")
-
-            return "\n".join(parts)
-
-        except Exception as e:
-            logger.debug(f"Failed to parse music card: {e}")
-            return None
-
-    @classmethod
-    def parse_json_card(cls, raw_json) -> Optional[str]:
-        """尝试解析 JSON 卡片
-        
-        按优先级尝试不同类型的卡片解析器:
-        1. 小程序卡片
-        2. 音乐卡片
-        3. 链接分享卡片
-        
-        Args:
-            raw_json: 原始 JSON 字符串或字典
-            
-        Returns:
-            易读的文本内容，如果无法识别返回 None
-        """
-        try:
-            if isinstance(raw_json, str):
-                data = json.loads(raw_json)
-            else:
-                data = raw_json
-
-            if not isinstance(data, dict):
-                return None
-
-            # 尝试小程序卡片
-            result = cls.parse_miniapp_card(data)
-            if result:
-                return result
-
-            # 尝试音乐卡片
-            result = cls.parse_music_card(data)
-            if result:
-                return result
-
-            # 尝试链接分享卡片
-            result = cls.parse_link_share_card(data)
-            if result:
-                return result
-
-            # 无法识别的卡片类型
-            return None
-
-        except Exception as e:
-            logger.debug(f"Failed to parse JSON card: {e}")
-            return None
+from card_parser import CardParser
+from plugin_settings import PluginSettings
+from result_sender import ParseResultSender
 
 
 class Main(Star):
-    """QQ 卡片消息解析插件 - 独立版本
-    
-    自动解析 QQ 卡片消息（小程序、链接分享等），
-    将其转换为易读的文本，使 LLM 能够理解卡片内容。
-    """
+    """QQ card parser plugin."""
 
     def __init__(
         self,
@@ -416,71 +25,43 @@ class Main(Star):
         config: AstrBotConfig | None = None,
     ) -> None:
         super().__init__(context)
-        self.parser = CardParser()
         self.context = context
         self.config = config
+        self.parser = CardParser()
+        self.settings = PluginSettings()
+        self.result_sender = ParseResultSender(True, 1500)
+
         self.verbose = False
         self.debug_echo_raw_json = False
         self.debug_echo_max_chars = 2000
         self.parse_command_use_forward = True
         self.parse_command_forward_threshold = 1500
+
         self._load_config()
         logger.info("QQ Card Parser plugin loaded")
-    
+
     def _load_config(self) -> None:
-        """加载插件配置。
-
-        优先级：
-        1. 插件 schema 注入配置（self.config）
-        2. 全局 provider_settings.qcard_parser（回退兼容）
-        """
         try:
-            if self.config:
-                self.verbose = bool(self.config.get("verbose", False))
-                self.debug_echo_raw_json = bool(
-                    self.config.get("debug_echo_raw_json", False),
-                )
-                self.debug_echo_max_chars = int(
-                    self.config.get("debug_echo_max_chars", 2000),
-                )
-                self.parse_command_use_forward = bool(
-                    self.config.get("parse_command_use_forward", True),
-                )
-                self.parse_command_forward_threshold = int(
-                    self.config.get("parse_command_forward_threshold", 1500),
-                )
-            else:
-                cfg = self.context.get_config()
-                provider_settings = cfg.get("provider_settings", {})
-                qcard_settings = provider_settings.get("qcard_parser", {})
-                self.verbose = bool(qcard_settings.get("verbose", False))
-                self.debug_echo_raw_json = bool(
-                    qcard_settings.get("debug_echo_raw_json", False),
-                )
-                self.debug_echo_max_chars = int(
-                    qcard_settings.get("debug_echo_max_chars", 2000),
-                )
-                self.parse_command_use_forward = bool(
-                    qcard_settings.get("parse_command_use_forward", True),
-                )
-                self.parse_command_forward_threshold = int(
-                    qcard_settings.get("parse_command_forward_threshold", 1500),
-                )
-
-            if self.debug_echo_max_chars < 200:
-                self.debug_echo_max_chars = 200
-
-            if self.parse_command_forward_threshold < 200:
-                self.parse_command_forward_threshold = 200
+            self.settings = PluginSettings.load(self.context, self.config)
+            self.verbose = self.settings.verbose
+            self.debug_echo_raw_json = self.settings.debug_echo_raw_json
+            self.debug_echo_max_chars = self.settings.debug_echo_max_chars
+            self.parse_command_use_forward = self.settings.parse_command_use_forward
+            self.parse_command_forward_threshold = (
+                self.settings.parse_command_forward_threshold
+            )
+            self.result_sender = ParseResultSender(
+                use_forward=self.parse_command_use_forward,
+                forward_threshold=self.parse_command_forward_threshold,
+            )
 
             if self.verbose:
-                logger.info("[QCard Parser] 详尽日志已启用")
+                logger.info("[QCard Parser] verbose logging enabled")
         except Exception as e:
-            logger.debug(f"[QCard Parser] 加载配置失败: {e}，使用默认配置")
+            logger.debug(f"[QCard Parser] failed to load config: {e}, fallback to defaults")
             self.verbose = False
 
     def _augment_reply_chain(self, reply: Comp.Reply) -> list[str]:
-        """将 Reply 链中的 Json 卡片解析为 Plain 文本，便于引用链路读取。"""
         chain = getattr(reply, "chain", None)
         if not isinstance(chain, list) or not chain:
             return []
@@ -496,18 +77,15 @@ class Main(Star):
         if not parsed_texts:
             return []
 
-        # 注入 Plain 到 reply.chain，供 quoted_message 解析器读取
         for text in parsed_texts:
             chain.append(Comp.Plain(text=f"\n{text}"))
 
-        # 同步 reply.message_str，部分路径会直接读取该字段
         existing = (getattr(reply, "message_str", "") or "").strip()
         merged = "\n\n".join(parsed_texts)
         reply.message_str = f"{existing}\n\n{merged}".strip() if existing else merged
         return parsed_texts
 
     def _parse_cards_from_chain(self, chain: list[object] | None) -> list[str]:
-        """从消息链中提取并解析 Json 卡片文本。"""
         if not isinstance(chain, list) or not chain:
             return []
 
@@ -520,7 +98,6 @@ class Main(Star):
         return parsed_texts
 
     def _collect_parsed_from_replies(self, replies: list[Comp.Reply]) -> list[str]:
-        """从回复组件中收集可解析卡片文本。"""
         all_parsed_texts: list[str] = []
         for reply in replies:
             parsed_texts = self._parse_cards_from_chain(getattr(reply, "chain", None))
@@ -533,50 +110,11 @@ class Main(Star):
                 all_parsed_texts.append(reply_text)
         return all_parsed_texts
 
-    @staticmethod
-    def _format_parse_result(parsed_texts: list[str]) -> str:
-        """格式化解析结果文本。"""
-        if len(parsed_texts) == 1:
-            return parsed_texts[0]
-        return "\n\n".join(
-            [f"[解析结果 {idx}]\n{text}" for idx, text in enumerate(parsed_texts, 1)],
-        )
-
-    def _should_use_forward(self, event: AstrMessageEvent, plain_result: str) -> bool:
-        """判断是否应使用合并转发发送。"""
-        threshold = self.parse_command_forward_threshold
-        return (
-            self.parse_command_use_forward
-            and threshold > 0
-            and event.get_platform_name() == "aiocqhttp"
-            and len(plain_result) > threshold
-        )
-
-    def _build_forward_nodes(
-        self,
-        event: AstrMessageEvent,
-        parsed_texts: list[str],
-    ) -> list[Comp.Node]:
-        """构造合并转发节点。"""
-        bot_name = event.get_self_id() or "AstrBot"
-        nodes: list[Comp.Node] = []
-        for idx, text in enumerate(parsed_texts, 1):
-            content = text if len(parsed_texts) == 1 else f"[解析结果 {idx}]\n{text}"
-            nodes.append(
-                Comp.Node(
-                    uin=event.get_self_id(),
-                    name=str(bot_name),
-                    content=[Comp.Plain(text=content)],
-                ),
-            )
-        return nodes
-
     async def _echo_raw_json_if_needed(
         self,
         event: AstrMessageEvent,
         component: Comp.Json,
     ) -> None:
-        """按配置回显原始 Json 调试信息。"""
         if not self.debug_echo_raw_json:
             return
 
@@ -592,19 +130,17 @@ class Main(Star):
 
             if len(raw_json_text) > self.debug_echo_max_chars:
                 raw_json_text = (
-                    raw_json_text[: self.debug_echo_max_chars]
-                    + "\n... (truncated)"
+                    raw_json_text[: self.debug_echo_max_chars] + "\n... (truncated)"
                 )
 
             await event.send(
                 MessageChain().message("[QCard Debug] 收到原始 Json:\n" + raw_json_text),
             )
         except Exception as e:
-            logger.warning(f"[QCard Parser] 回显原始 Json 失败: {e}")
+            logger.warning(f"[QCard Parser] failed to echo raw Json: {e}")
 
     @staticmethod
     def _append_summary(existing: str | None, summary: str) -> str:
-        """将摘要追加到既有 message_str。"""
         if existing:
             return f"{existing}\n\n{summary}"
         return summary
@@ -614,7 +150,6 @@ class Main(Star):
         event: AstrMessageEvent,
         parsed_cards: list[str],
     ) -> None:
-        """将解析后的卡片摘要注入事件文本上下文。"""
         card_summary = "\n\n".join(parsed_cards)
         event.message_str = self._append_summary(event.message_str, card_summary)
         event.message_obj.message_str = self._append_summary(
@@ -624,13 +159,12 @@ class Main(Star):
 
         if self.verbose:
             logger.info(
-                f"[QCard Parser] 已注入 {len(parsed_cards)} 个卡片到消息:\n{card_summary}"
+                f"[QCard Parser] injected {len(parsed_cards)} parsed cards:\n{card_summary}"
             )
         else:
-            logger.debug(f"[QCard Parser] 已注入 {len(parsed_cards)} 个卡片到消息")
+            logger.debug(f"[QCard Parser] injected {len(parsed_cards)} parsed cards")
 
     def _parse_json_component(self, component: Comp.Json) -> Optional[str]:
-        """解析单个 Json 组件。"""
         raw_data = component.data
         if isinstance(raw_data, dict):
             return self.parser.parse_json_card(raw_data)
@@ -643,18 +177,10 @@ class Main(Star):
         event: AstrMessageEvent,
         parsed_texts: list[str],
     ) -> None:
-        """按长度条件发送解析结果：过长时使用合并转发。"""
-        plain_result = self._format_parse_result(parsed_texts)
-
-        if not self._should_use_forward(event, plain_result):
-            await event.send(MessageChain().message(plain_result))
-            return
-
-        await event.send(MessageChain([Comp.Nodes(nodes=self._build_forward_nodes(event, parsed_texts))]))
+        await self.result_sender.send(event, parsed_texts)
 
     @filter.command("解析卡片")
     async def parse_card_command(self, event: AstrMessageEvent) -> None:
-        """解析被引用消息中的 QQ 卡片。使用方式：引用消息并发送 /解析卡片"""
         reply_components = [
             comp for comp in event.message_obj.message if isinstance(comp, Comp.Reply)
         ]
@@ -680,41 +206,33 @@ class Main(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 2)
     async def parse_qq_cards(self, event: AstrMessageEvent) -> None:
-        """高优先级处理消息中的 QQ 卡片
-        
-        在消息被发送给 LLM 前进行解析，确保 LLM 能够理解卡片内容。
-        
-        Args:
-            event: 消息事件
-        """
         try:
-            # 检查消息链是否存在
             message_chain = event.message_obj.message
             if not message_chain:
                 return
 
             parsed_cards = []
 
-            # 遍历消息链中的所有组件
             for component in message_chain:
-                # 只处理 Json 组件（卡片消息）
                 if not isinstance(component, Comp.Json):
-                    # 处理引用链中的 Json 卡片
                     if isinstance(component, Comp.Reply):
                         reply_parsed = self._augment_reply_chain(component)
                         if reply_parsed and self.verbose:
                             logger.info(
-                                "[QCard Parser] 已为引用消息注入解析文本，条数: "
+                                "[QCard Parser] parsed cards injected into reply chain, count: "
                                 f"{len(reply_parsed)}"
                             )
                         elif self.verbose and getattr(component, "id", None):
                             logger.info(
-                                "[QCard Parser] 引用消息未含可解析 Json 链，"
-                                "若仅 reply_id 无 chain，插件层无法补全"
+                                "[QCard Parser] reply has no parsable Json chain; "
+                                "plugin cannot fetch content with only reply_id"
                             )
                     continue
+
                 if self.verbose:
-                    logger.info(f"[QCard Parser] 检测到 Json 组件: {str(component.data)[:100]}...")
+                    logger.info(
+                        f"[QCard Parser] detected Json component: {str(component.data)[:100]}..."
+                    )
 
                 await self._echo_raw_json_if_needed(event, component)
                 parsed_text = self._parse_json_component(component)
@@ -722,20 +240,17 @@ class Main(Star):
                 if parsed_text:
                     parsed_cards.append(parsed_text)
                     if self.verbose:
-                        logger.info(f"[QCard Parser] 解析结果:\n{parsed_text}")
+                        logger.info(f"[QCard Parser] parsed result:\n{parsed_text}")
                     else:
-                        logger.debug(f"[QCard Parser] 成功解析卡片: {parsed_text[:50]}...")
+                        logger.debug(f"[QCard Parser] parse success: {parsed_text[:50]}...")
                 elif self.verbose:
-                    logger.info("[QCard Parser] 未识别为可解析卡片，已跳过")
+                    logger.info("[QCard Parser] Json is not a supported card type, skipped")
 
-            # 如果成功解析了卡片，将其注入消息
             if parsed_cards:
                 self._inject_parsed_cards_to_event(event, parsed_cards)
 
         except Exception as e:
-            logger.error(f"[QCard Parser] 处理消息时出错: {e}", exc_info=True)
-            # 不中断事件流，安全继续处理
-    
+            logger.error(f"[QCard Parser] failed to handle message: {e}", exc_info=True)
+
     async def terminate(self) -> None:
-        """插件卸载时调用"""
-        logger.info("[QCard Parser] 插件已卸载")
+        logger.info("[QCard Parser] plugin unloaded")
