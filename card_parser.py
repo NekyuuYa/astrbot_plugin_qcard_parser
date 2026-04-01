@@ -3,64 +3,11 @@ from typing import Optional
 
 from astrbot.api import logger
 
+from link_text_utils import clean_music_url, pick_first_str_by_paths, strip_prompt_prefix, truncate_text
+
 
 class CardParser:
     """QQ card message parser."""
-
-    @staticmethod
-    def _pick_str_by_paths(data: dict, paths: list[tuple[str, ...]]) -> str:
-        for path in paths:
-            current = data
-            ok = True
-            for key in path:
-                if not isinstance(current, dict) or key not in current:
-                    ok = False
-                    break
-                current = current[key]
-            if ok and isinstance(current, str):
-                value = current.strip()
-                if value:
-                    return value
-        return ""
-
-    @staticmethod
-    def _strip_prompt_prefix(prompt: str) -> str:
-        text = prompt.strip()
-        for prefix in ("[QQ小程序]", "[小程序]", "[分享]", "[链接]", "[网页]"):
-            if text.startswith(prefix):
-                return text[len(prefix) :].strip()
-        return text
-
-    @staticmethod
-    def _clean_music_url(url: str) -> str:
-        if not url:
-            return ""
-
-        if "y.qq.com" in url or "i.y.qq.com" in url:
-            if "?" in url:
-                query_str = url.split("?", 1)[1]
-                for param in query_str.split("&"):
-                    if "=" in param:
-                        key, value = param.split("=", 1)
-                        if key.lower() == "songmid" and value:
-                            return f"https://y.qq.com/n/ryqq_v2/songDetail/{value}"
-            return url
-
-        if "music.163.com" in url:
-            if "?" not in url:
-                return url
-            parts = url.split("?", 1)
-            base_url = parts[0]
-            query_str = parts[1] if len(parts) > 1 else ""
-            if "/song" in base_url:
-                for param in query_str.split("&"):
-                    if "=" in param:
-                        key, value = param.split("=", 1)
-                        if key.lower() == "id" and value:
-                            return f"{base_url}?id={value}"
-            return base_url
-
-        return url
 
     @staticmethod
     def parse_miniapp_card(data: dict) -> Optional[str]:
@@ -74,7 +21,7 @@ class CardParser:
             if not is_miniapp:
                 return None
 
-            title = CardParser._pick_str_by_paths(
+            title = pick_first_str_by_paths(
                 data,
                 [
                     ("title",),
@@ -85,9 +32,9 @@ class CardParser:
                 ],
             )
             if not title and prompt:
-                title = CardParser._strip_prompt_prefix(prompt)
+                title = strip_prompt_prefix(prompt)
 
-            jump_url = CardParser._pick_str_by_paths(
+            jump_url = pick_first_str_by_paths(
                 data,
                 [
                     ("meta", "detail_1", "qqdocurl"),
@@ -103,7 +50,7 @@ class CardParser:
 
             parts = []
             if prompt:
-                parts.append(f"标题: {CardParser._strip_prompt_prefix(prompt)}")
+                parts.append(f"标题: {strip_prompt_prefix(prompt)}")
             if title:
                 parts.append(f"来源: {title}")
             if jump_url:
@@ -128,7 +75,7 @@ class CardParser:
             if not is_share:
                 return None
 
-            title = CardParser._pick_str_by_paths(
+            title = pick_first_str_by_paths(
                 data,
                 [
                     ("meta", "news", "title"),
@@ -138,9 +85,9 @@ class CardParser:
                 ],
             )
             if not title and prompt:
-                title = CardParser._strip_prompt_prefix(prompt)
+                title = strip_prompt_prefix(prompt)
 
-            desc = CardParser._pick_str_by_paths(
+            desc = pick_first_str_by_paths(
                 data,
                 [
                     ("meta", "news", "desc"),
@@ -149,7 +96,7 @@ class CardParser:
                     ("desc",),
                 ],
             )
-            url = CardParser._pick_str_by_paths(
+            url = pick_first_str_by_paths(
                 data,
                 [
                     ("meta", "news", "qqdocurl"),
@@ -164,7 +111,7 @@ class CardParser:
                     ("url",),
                 ],
             )
-            tag = CardParser._pick_str_by_paths(
+            tag = pick_first_str_by_paths(
                 data,
                 [
                     ("meta", "news", "tag"),
@@ -181,7 +128,7 @@ class CardParser:
             if title:
                 parts.append(f"标题: {title}")
             if desc:
-                parts.append(f"描述: {desc[:100] + '...' if len(desc) > 100 else desc}")
+                parts.append(f"描述: {truncate_text(desc, 100)}")
             if tag:
                 parts.append(f"来源: {tag}")
             if url:
@@ -206,12 +153,12 @@ class CardParser:
             if not music:
                 return None
 
-            title = CardParser._pick_str_by_paths(music, [("title",)])
-            artist = CardParser._pick_str_by_paths(music, [("desc",)])
-            url = CardParser._pick_str_by_paths(music, [("jumpUrl",), ("musicUrl",), ("url",)])
+            title = pick_first_str_by_paths(music, [("title",)])
+            artist = pick_first_str_by_paths(music, [("desc",)])
+            url = pick_first_str_by_paths(music, [("jumpUrl",), ("musicUrl",), ("url",)])
             if url:
-                url = CardParser._clean_music_url(url)
-            tag = CardParser._pick_str_by_paths(music, [("tag",), ("source",)])
+                url = clean_music_url(url)
+            tag = pick_first_str_by_paths(music, [("tag",), ("source",)])
 
             if not title:
                 return None

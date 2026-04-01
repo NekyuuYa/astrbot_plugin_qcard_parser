@@ -12,6 +12,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 
 from card_parser import CardParser
+from link_text_utils import append_summary
 from plugin_settings import PluginSettings
 from result_sender import ParseResultSender
 
@@ -139,20 +140,14 @@ class Main(Star):
         except Exception as e:
             logger.warning(f"[QCard Parser] failed to echo raw Json: {e}")
 
-    @staticmethod
-    def _append_summary(existing: str | None, summary: str) -> str:
-        if existing:
-            return f"{existing}\n\n{summary}"
-        return summary
-
     def _inject_parsed_cards_to_event(
         self,
         event: AstrMessageEvent,
         parsed_cards: list[str],
     ) -> None:
         card_summary = "\n\n".join(parsed_cards)
-        event.message_str = self._append_summary(event.message_str, card_summary)
-        event.message_obj.message_str = self._append_summary(
+        event.message_str = append_summary(event.message_str, card_summary)
+        event.message_obj.message_str = append_summary(
             event.message_obj.message_str,
             card_summary,
         )
