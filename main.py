@@ -233,13 +233,93 @@ class CardParser:
             logger.debug(f"Failed to parse link share card: {e}")
             return None
 
+    @staticmethod
+    def parse_music_card(data: dict) -> Optional[str]:
+        """解析音乐卡片
+        
+        提取关键字段:
+        - meta.music.title: 歌曲名
+        - meta.music.desc: 艺术家
+        - meta.music.tag: 音乐平台来源
+        - meta.music.jumpUrl: 跳转链接
+        
+        Args:
+            data: JSON 卡片数据字典
+            
+        Returns:
+            易读的文本内容，如果不是音乐卡片返回 None
+        """
+        try:
+            app = str(data.get("app", ""))
+            view = str(data.get("view", ""))
+            prompt = str(data.get("prompt", "")).strip()
+
+            # 识别音乐卡片
+            is_music = (
+                app.startswith("com.tencent.music")
+                and view == "music"
+            ) or prompt.startswith("[分享]")
+            if not is_music:
+                return None
+
+            # 提取 meta.music 下的内容
+            meta = data.get("meta", {})
+            music = meta.get("music", {})
+
+            if not music:
+                return None
+
+            # 提取关键字段
+            title = CardParser._pick_str_by_paths(
+                music,
+                [("title",)],
+            )
+            artist = CardParser._pick_str_by_paths(
+                music,
+                [("desc",)],
+            )
+            url = CardParser._pick_str_by_paths(
+                music,
+                [("jumpUrl",), ("musicUrl",), ("url",)],
+            )
+            tag = CardParser._pick_str_by_paths(
+                music,
+                [("tag",), ("source",)],
+            )
+
+            # 如果没有歌曲名，返回 None
+            if not title:
+                return None
+
+            # 构造易读文本
+            parts = ["[音乐]"]
+
+            if title:
+                parts.append(f"歌曲: {title}")
+
+            if artist:
+                parts.append(f"艺术家: {artist}")
+
+            if tag:
+                parts.append(f"来源: {tag}")
+
+            if url:
+                parts.append(f"链接: {url}")
+
+            return "\n".join(parts)
+
+        except Exception as e:
+            logger.debug(f"Failed to parse music card: {e}")
+            return None
+
     @classmethod
     def parse_json_card(cls, raw_json) -> Optional[str]:
         """尝试解析 JSON 卡片
         
         按优先级尝试不同类型的卡片解析器:
         1. 小程序卡片
-        2. 链接分享卡片
+        2. 音乐卡片
+        3. 链接分享卡片
         
         Args:
             raw_json: 原始 JSON 字符串或字典
@@ -258,6 +338,11 @@ class CardParser:
 
             # 尝试小程序卡片
             result = cls.parse_miniapp_card(data)
+            if result:
+                return result
+
+            # 尝试音乐卡片
+            result = cls.parse_music_card(data)
             if result:
                 return result
 
