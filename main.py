@@ -62,6 +62,16 @@ class Main(Star):
             logger.debug(f"[QCard Parser] failed to load config: {e}, fallback to defaults")
             self.verbose = False
 
+    @staticmethod
+    def _is_self_message(event: AstrMessageEvent) -> bool:
+        """Skip processing bot's own messages to avoid re-entrancy side effects."""
+        try:
+            sender_id = str(event.get_sender_id() or "")
+            self_id = str(event.get_self_id() or "")
+            return bool(sender_id and self_id and sender_id == self_id)
+        except Exception:
+            return False
+
     def _augment_reply_chain(self, reply: Comp.Reply) -> list[str]:
         chain = getattr(reply, "chain", None)
         if not isinstance(chain, list) or not chain:
@@ -176,6 +186,9 @@ class Main(Star):
 
     @filter.command("解析卡片")
     async def parse_card_command(self, event: AstrMessageEvent) -> None:
+        if self._is_self_message(event):
+            return
+
         reply_components = [
             comp for comp in event.message_obj.message if isinstance(comp, Comp.Reply)
         ]
@@ -202,6 +215,9 @@ class Main(Star):
     @filter.event_message_type(filter.EventMessageType.ALL, priority=maxsize - 2)
     async def parse_qq_cards(self, event: AstrMessageEvent) -> None:
         try:
+            if self._is_self_message(event):
+                return
+
             message_chain = event.message_obj.message
             if not message_chain:
                 return
