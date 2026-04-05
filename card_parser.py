@@ -3,7 +3,7 @@ from typing import Optional
 
 from astrbot.api import logger
 
-from link_text_utils import clean_music_url, pick_first_str_by_paths, strip_prompt_prefix, truncate_text
+from .link_text_utils import clean_music_url, pick_first_str_by_paths, strip_prompt_prefix, truncate_text
 
 
 class CardParser:

@@ -11,10 +11,10 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star
 
-from card_parser import CardParser
-from link_text_utils import append_summary
-from plugin_settings import PluginSettings
-from result_sender import ParseResultSender
+from .card_parser import CardParser
+from .link_text_utils import append_summary
+from .plugin_settings import PluginSettings
+from .result_sender import ParseResultSender
 
 
 class Main(Star):
